@@ -106,6 +106,7 @@ class TokenExchangeSigner(SecurityTokenSigner):
     def _get_new_token(self):
         """
         Requests a new UPST token from the token exchange endpoint.
+        Supports both oci_domain_url (preferred) and oci_domain_id (deprecated).
         """
         try:
             jwt = self._get_jwt()
@@ -115,8 +116,9 @@ class TokenExchangeSigner(SecurityTokenSigner):
                 encoding=Encoding.PEM,
                 format=PublicFormat.SubjectPublicKeyInfo
             ).decode("utf-8").replace("\n", "").replace("-----BEGIN PUBLIC KEY-----", "").replace("-----END PUBLIC KEY-----", "")
-
+            
             encoded_auth = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode("utf-8")).decode("utf-8")
+
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Authorization": f"Basic {encoded_auth}"
@@ -130,7 +132,24 @@ class TokenExchangeSigner(SecurityTokenSigner):
                 "public_key": public_key_pem
             }
 
-            full_token_url = f"https://{self.oci_domain_url}/oauth2/v1/token"
+            # Determine token endpoint based on whether user provided full URL or domain ID
+            if self.oci_domain_url:
+                if self.oci_domain_url.startswith("http://") or self.oci_domain_url.startswith("https://"):
+                    domain_base = self.oci_domain_url.rstrip('/')
+                    full_token_url = f"{domain_base}/oauth2/v1/token"
+                else:
+                    # User passed domain ID, backward compatibility
+                    self.logger.warning(
+                        "Passing oci_domain_id instead of full URL is deprecated."
+                        "Please migrate to using oci_domain_url in the format"
+                        "'https://<domain>.identity.oraclecloud.com'."
+                    )
+                    full_token_url = f"https://{self.oci_domain_url}.identity.oraclecloud.com/oauth2/v1/token"
+            else:
+                raise ValueError(
+                    "Missing oci_domain_url. Either provide the full URL or domain ID."
+                )
+
             self.logger.debug("Requesting UPST token from: %s", full_token_url)
 
             response = self.requests_session.post(full_token_url, headers=headers, data=data)
@@ -149,3 +168,4 @@ class TokenExchangeSigner(SecurityTokenSigner):
         except Exception as e:
             self.logger.error("Failed to get new token: %s", str(e))
             raise
+
